@@ -1,0 +1,22 @@
+[
+  {
+    "id": "chat-short",
+    "conversations": [
+      {"from": "human", "value": "你好，请用一句话介绍你自己。"},
+      {"from": "gpt", "value": "你好，我是一个用于测试的助手。"},
+      {"from": "human", "value": "再用一句话说明你能做什么。"},
+      {"from": "gpt", "value": "我可以回答问题、总结文本并协助推理。"}
+    ]
+  },
+  {
+    "id": "chat-long",
+    "conversations": [
+      {"from": "human", "value": "请列出三个学习机器学习的步骤。"},
+      {"from": "gpt", "value": "先学习数学基础，再学习经典模型，最后做项目实践。"},
+      {"from": "human", "value": "每个步骤再补充一个关键词。"},
+      {"from": "gpt", "value": "数学对应线性代数，模型对应监督学习，实践对应实验记录。"},
+      {"from": "human", "value": "最后用一句话总结。"},
+      {"from": "gpt", "value": "持续实践和复盘是学好机器学习的关键。"}
+    ]
+  }
+]

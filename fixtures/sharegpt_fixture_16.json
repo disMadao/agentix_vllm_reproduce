@@ -1,0 +1,178 @@
+[
+  {
+    "id": "chat-short-01",
+    "conversations": [
+      {"from": "human", "value": "你好，请用一句话介绍你自己。"},
+      {"from": "gpt", "value": "你好，我是一个用于测试的助手。"},
+      {"from": "human", "value": "你能帮我做什么？"},
+      {"from": "gpt", "value": "我可以回答问题、总结文本并协助推理。"}
+    ]
+  },
+  {
+    "id": "chat-short-02",
+    "conversations": [
+      {"from": "human", "value": "什么是机器学习？"},
+      {"from": "gpt", "value": "机器学习是让模型从数据中学习规律的方法。"},
+      {"from": "human", "value": "用更短的话说。"},
+      {"from": "gpt", "value": "机器学习就是从数据中学经验。"}
+    ]
+  },
+  {
+    "id": "chat-short-03",
+    "conversations": [
+      {"from": "human", "value": "请给我一个番茄炒蛋的步骤。"},
+      {"from": "gpt", "value": "先炒蛋，再炒番茄，最后合炒调味。"},
+      {"from": "human", "value": "需要注意什么？"},
+      {"from": "gpt", "value": "注意火候和盐量，不要炒太久。"}
+    ]
+  },
+  {
+    "id": "chat-short-04",
+    "conversations": [
+      {"from": "human", "value": "什么是操作系统调度？"},
+      {"from": "gpt", "value": "它决定不同任务何时使用计算资源。"},
+      {"from": "human", "value": "举一个例子。"},
+      {"from": "gpt", "value": "CPU 在多个进程之间分配时间片就是调度。"}
+    ]
+  },
+  {
+    "id": "chat-medium-01",
+    "conversations": [
+      {"from": "human", "value": "请列出三个学习深度学习的阶段。"},
+      {"from": "gpt", "value": "数学基础、模型原理、项目实践。"},
+      {"from": "human", "value": "每个阶段给一个关键词。"},
+      {"from": "gpt", "value": "线性代数、反向传播、实验复盘。"},
+      {"from": "human", "value": "最后给一句建议。"},
+      {"from": "gpt", "value": "坚持写代码和记录实验比只看教程更重要。"}
+    ]
+  },
+  {
+    "id": "chat-medium-02",
+    "conversations": [
+      {"from": "human", "value": "解释一下 KV cache。"},
+      {"from": "gpt", "value": "KV cache 保存历史 token 的 key/value，避免重复计算。"},
+      {"from": "human", "value": "它为什么能加速推理？"},
+      {"from": "gpt", "value": "因为 decode 时只需计算新 token 的注意力。"},
+      {"from": "human", "value": "它的代价是什么？"},
+      {"from": "gpt", "value": "主要代价是显存占用。"}
+    ]
+  },
+  {
+    "id": "chat-medium-03",
+    "conversations": [
+      {"from": "human", "value": "请总结 ReAct Agent 的核心流程。"},
+      {"from": "gpt", "value": "模型先思考，再选择工具，观察结果后继续推理。"},
+      {"from": "human", "value": "它和普通聊天有什么区别？"},
+      {"from": "gpt", "value": "普通聊天主要生成文本，ReAct 会穿插工具调用。"},
+      {"from": "human", "value": "一句话总结。"},
+      {"from": "gpt", "value": "ReAct 把推理和行动交替组织起来。"}
+    ]
+  },
+  {
+    "id": "chat-medium-04",
+    "conversations": [
+      {"from": "human", "value": "什么是 head-of-line blocking？"},
+      {"from": "gpt", "value": "队首慢任务阻塞后续任务的现象。"},
+      {"from": "human", "value": "在 LLM serving 中是什么表现？"},
+      {"from": "gpt", "value": "长请求会拖慢短请求或短程序的完成。"},
+      {"from": "human", "value": "怎么缓解？"},
+      {"from": "gpt", "value": "可以使用抢占、分级队列和程序级调度。"}
+    ]
+  },
+  {
+    "id": "chat-long-01",
+    "conversations": [
+      {"from": "human", "value": "设计一个一天的学习计划。"},
+      {"from": "gpt", "value": "上午学习理论，下午写代码，晚上复盘。"},
+      {"from": "human", "value": "上午具体学什么？"},
+      {"from": "gpt", "value": "可以学习注意力机制和 Transformer 结构。"},
+      {"from": "human", "value": "下午做什么项目？"},
+      {"from": "gpt", "value": "实现一个小型文本分类或推理 demo。"},
+      {"from": "human", "value": "晚上如何复盘？"},
+      {"from": "gpt", "value": "记录问题、解决方法和第二天计划。"},
+      {"from": "human", "value": "最后给一个提醒。"},
+      {"from": "gpt", "value": "不要贪多，保证每一步都有可验证产出。"}
+    ]
+  },
+  {
+    "id": "chat-long-02",
+    "conversations": [
+      {"from": "human", "value": "解释 vLLM 的 continuous batching。"},
+      {"from": "gpt", "value": "它持续接纳新请求，把 prefill 和 decode 组织成批处理。"},
+      {"from": "human", "value": "它的好处是什么？"},
+      {"from": "gpt", "value": "可以提高 GPU 利用率和整体吞吐。"},
+      {"from": "human", "value": "它可能带来什么问题？"},
+      {"from": "gpt", "value": "不同长度请求混合时可能产生等待和抢占问题。"},
+      {"from": "human", "value": "Agentix 为什么要改 scheduler？"},
+      {"from": "gpt", "value": "因为 agent 程序包含多次相关 LLM call，需要 program-level context。"},
+      {"from": "human", "value": "总结一句。"},
+      {"from": "gpt", "value": "continuous batching 管 request，Agentix 进一步管 program。"}
+    ]
+  },
+  {
+    "id": "chat-long-03",
+    "conversations": [
+      {"from": "human", "value": "帮我规划一个小型 benchmark。"},
+      {"from": "gpt", "value": "先定义 workload，再定义指标，最后运行对比。"},
+      {"from": "human", "value": "workload 怎么设计？"},
+      {"from": "gpt", "value": "混合短对话、中等任务和长任务。"},
+      {"from": "human", "value": "指标有哪些？"},
+      {"from": "gpt", "value": "latency、throughput、P95/P99 和 token/s。"},
+      {"from": "human", "value": "怎么保证公平？"},
+      {"from": "gpt", "value": "同一输入、同一模型、同一 max_tokens 和相同环境。"},
+      {"from": "human", "value": "最后输出什么？"},
+      {"from": "gpt", "value": "输出 JSONL、summary 和对比文档。"}
+    ]
+  },
+  {
+    "id": "chat-long-04",
+    "conversations": [
+      {"from": "human", "value": "请解释 MLFQ。"},
+      {"from": "gpt", "value": "MLFQ 是多级反馈队列调度算法。"},
+      {"from": "human", "value": "队列之间怎么选择？"},
+      {"from": "gpt", "value": "高优先级队列先被调度，低优先级等待。"},
+      {"from": "human", "value": "任务怎么降级？"},
+      {"from": "gpt", "value": "用完时间片后会进入更低优先级队列。"},
+      {"from": "human", "value": "怎么避免饥饿？"},
+      {"from": "gpt", "value": "等待过久的任务可以被提升。"},
+      {"from": "human", "value": "Agentix 用它做什么？"},
+      {"from": "gpt", "value": "用程序级 service time 把 LLM call 放入不同队列。"}
+    ]
+  },
+  {
+    "id": "chat-extra-01",
+    "conversations": [
+      {"from": "human", "value": "解释一下 prefix cache。"},
+      {"from": "gpt", "value": "prefix cache 复用相同前缀的 KV 结果。"},
+      {"from": "human", "value": "为什么 agent 会受益？"},
+      {"from": "gpt", "value": "同一程序的后续调用通常共享历史上下文。"}
+    ]
+  },
+  {
+    "id": "chat-extra-02",
+    "conversations": [
+      {"from": "human", "value": "什么是 program-level latency？"},
+      {"from": "gpt", "value": "它是整个程序从开始到完成的端到端延迟。"},
+      {"from": "human", "value": "它和 request latency 有什么区别？"},
+      {"from": "gpt", "value": "request latency 只看单次 LLM call。"}
+    ]
+  },
+  {
+    "id": "chat-extra-03",
+    "conversations": [
+      {"from": "human", "value": "为什么短任务会被长任务拖慢？"},
+      {"from": "gpt", "value": "长任务占用 batch 和 KV cache，会让短任务等待。"},
+      {"from": "human", "value": "程序级调度如何帮助？"},
+      {"from": "gpt", "value": "它会优先处理累计服务时间较少的程序。"}
+    ]
+  },
+  {
+    "id": "chat-extra-04",
+    "conversations": [
+      {"from": "human", "value": "给我一个测试报告模板。"},
+      {"from": "gpt", "value": "包括环境、命令、数据、指标、结论和限制。"},
+      {"from": "human", "value": "再加一个注意事项。"},
+      {"from": "gpt", "value": "要说明样本规模和随机波动。"}
+    ]
+  }
+]
