@@ -4,83 +4,146 @@
 
 ## 运行环境
 
-代码会把 `nano-vllm` 作为同级目录加载，并以 `agentix_app` 作为 Python 包名。推荐目录结构如下：
+从**本仓库根目录**运行命令。代码会把 `nano-vllm` 作为本仓库的同级目录加载，推荐目录结构如下：
 
 ```text
 <workspace>/
 ├── nano-vllm/
-└── agentix_app/       # 本仓库
+└── agentix_vllm_reproduce/   # 本仓库，目录名不需要改成 agentix_app
 ```
 
-从 `<workspace>` 目录运行下文命令。模型需要已经下载到本地；运行时建议显式传入 `--model-path`，不要依赖代码中的开发机默认路径。
+进入仓库根目录：
+
+```bash
+cd <workspace>/agentix_vllm_reproduce
+```
+
+模型需要已经下载到本地；正式运行时建议显式传入 `--model-path` 或脚本里的 `MODEL`，不要依赖代码中的开发机默认路径。
 
 ## 测试方式
 
-### 快速冒烟测试
+### 真实 ShareGPT 数据
 
-仓库自带 16 个 ShareGPT program 和 16 个 BFCL program 的小型 fixture。下面的命令运行 ShareGPT fixture：
+ShareGPT workload 应该重放完整多轮 conversation，而不是只使用第一轮。本仓库的数据脚本默认使用 [anon8231489123/ShareGPT_Vicuna_unfiltered](https://huggingface.co/datasets/anon8231489123/ShareGPT_Vicuna_unfiltered)，并固定到 revision `192ab2185289094fc556ec8ce5ce1e8e587154ca` 下的 `ShareGPT_V3_unfiltered_cleaned_split.json`：
+
+| 项目 | 值 |
+| --- | --- |
+| 原始文件大小 | `672837942` bytes，约 642 MiB |
+| 许可证 | Apache-2.0 |
+| program | 一条完整 conversation |
+| LLM call | 一个 user/assistant turn |
+
+下面的命令会断点下载原始数据、流式扫描整个数据集，并使用 reservoir sampling 从所有有效 program 中随机抽取 10000 条：
 
 ```bash
-python -m agentix_app.dataset_runner \
-  --dataset sharegpt \
-  --input agentix_app/fixtures/sharegpt_fixture_16.json \
-  --limit 16 \
-  --model-path /path/to/Qwen3-0.6B \
-  --scheduler-policy mlfq_plas \
-  --arrival-rate 2 \
-  --arrival-seed 0 \
-  --shuffle-programs \
-  --out results/sharegpt-smoke.jsonl
+python3 scripts/prepare_sharegpt.py \
+  --num-programs 10000 \
+  --seed 0 \
+  --output data/sharegpt-real-10000-seed0.jsonl
 ```
 
-BFCL fixture 使用相同入口。`--replay-steps` 控制每个 BFCL program 包含多少次顺序 LLM call：
+生成的文件如下：
+
+```text
+data/raw/ShareGPT_V3_unfiltered_cleaned_split.json
+data/sharegpt-real-10000-seed0.jsonl
+data/sharegpt-real-10000-seed0.jsonl.stats.json
+```
+
+stats 文件记录全量扫描数、有效 program 数、抽样 call 分布、数据 revision 和许可证。`data/` 已加入 `.gitignore`，不会提交原始数据和抽样结果。
+
+### 先检查数据集
+
+在没有 nano-vLLM 或模型的机器上，可以先只检查数据集解析和 workload 规模：
 
 ```bash
-python -m agentix_app.dataset_runner \
-  --dataset bfcl \
-  --input agentix_app/fixtures/bfcl_fixture_16.jsonl \
+python3 -m agentix_app.dataset_runner \
+  --dataset sharegpt \
+  --input fixtures/sharegpt_fixture_16.json \
   --limit 16 \
-  --replay-steps 3 \
-  --model-path /path/to/Qwen3-0.6B \
-  --scheduler-policy mlfq_plas \
   --arrival-rate 2 \
   --arrival-seed 0 \
   --shuffle-programs \
-  --out results/bfcl-smoke.jsonl
+  --validate-only
+```
+
+也可以用一键脚本做同样检查，此时不需要设置 `MODEL`：
+
+```bash
+VALIDATE_ONLY=1 \
+DATASET=fixtures/sharegpt_fixture_16.json \
+LIMIT=16 \
+./scripts/run_benchmark.sh
+```
+
+这个检查不会启动推理，只会输出 program 数、call 数、每个 program 的 call 分布和 prompt 字符数分布。真正运行推理时会使用模型 tokenizer 执行 `--max-model-len` 过滤，summary 里会记录 `num_skipped_overlong_programs`。
+
+### 快速冒烟测试
+
+仓库自带 16 个 ShareGPT program 和 16 个 BFCL program 的小型 fixture。下面的命令在正式推理机器上运行 ShareGPT fixture：
+
+```bash
+DATASET=fixtures/sharegpt_fixture_16.json \
+MODEL=/path/to/Qwen3-0.6B \
+LIMIT=16 \
+ARRIVAL_RATE=2 \
+ARRIVAL_SEEDS="0" \
+SCHEDULER_POLICIES="mlfq_plas" \
+./scripts/run_benchmark.sh
+```
+
+BFCL fixture 使用相同入口。`REPLAY_STEPS` 控制每个 BFCL program 包含多少次顺序 LLM call：
+
+```bash
+DATASET_TYPE=bfcl \
+DATASET=fixtures/bfcl_fixture_16.jsonl \
+MODEL=/path/to/Qwen3-0.6B \
+LIMIT=16 \
+REPLAY_STEPS=3 \
+ARRIVAL_RATE=2 \
+ARRIVAL_SEEDS="0" \
+SCHEDULER_POLICIES="mlfq_plas" \
+./scripts/run_benchmark.sh
 ```
 
 fixture 适合检查脚本、模型和调度器能否正常协作，不代表论文规模的性能结果。
 
-### 一次运行三种调度策略
+### 一键跑三种策略
 
-一次 `dataset_runner` 进程只测试一种策略。可以使用下面的循环依次测试 `fcfs`、`plas` 和 `mlfq_plas`：
+已有完整 ShareGPT 数据集时，可以直接指定路径，并启用真实回复长度 replay：
 
 ```bash
-MODEL=/path/to/Qwen3-0.6B
-DATASET=agentix_app/fixtures/sharegpt_fixture_16.json
-
-for policy in fcfs plas mlfq_plas; do
-  python -m agentix_app.dataset_runner \
-    --dataset sharegpt \
-    --input "$DATASET" \
-    --limit 16 \
-    --model-path "$MODEL" \
-    --scheduler-policy "$policy" \
-    --arrival-rate 2 \
-    --arrival-seed 0 \
-    --shuffle-programs \
-    --out "results/sharegpt-${policy}.jsonl"
-done
+DATASET=/data/ShareGPT_V3_unfiltered_cleaned_split.json \
+MODEL=/models/Qwen3-0.6B \
+LIMIT=1000 \
+ARRIVAL_RATE=2 \
+ARRIVAL_SEEDS="0 1 2" \
+OUTPUT_LENGTH_MODE=reference \
+MAX_TOKENS=512 \
+./scripts/run_benchmark.sh
 ```
 
-正式测试时，把 fixture 换成完整数据集并增大 `--limit`。为了让策略之间可比，以下参数必须保持一致：
+脚本默认依次测试 `fcfs`、`plas` 和 `mlfq_plas`，结果保存在 `results/` 下。为了让策略之间可比，以下参数必须保持一致：
 
-- 数据集文件和 `--limit`
-- `--arrival-rate`、`--arrival-seed` 和是否启用 `--shuffle-programs`
-- 模型、`--max-tokens`、batch 配置和其他推理参数
+- 数据集文件和 `LIMIT`
+- `ARRIVAL_RATE`、`ARRIVAL_SEEDS`、是否启用 `SHUFFLE_PROGRAMS`
+- 模型、`MAX_TOKENS`、batch 配置和其他推理参数
 - 运行机器和 GPU 配置
 
-建议使用多个 `--arrival-seed` 重复测试，并扫描多档 `--arrival-rate`。到达率过低时几乎没有资源竞争，不容易体现调度策略的差异。
+如果正式机器还没有准备好的 ShareGPT 文件，可以使用固定版本下载和采样脚本：
+
+```bash
+MODEL_PATH=/models/Qwen3-0.6B \
+PREPARE_PROGRAMS=10000 \
+LIMIT=1000 \
+ARRIVAL_RATES="1 2 3" \
+ARRIVAL_SEEDS="0 1 2" \
+./scripts/run_sharegpt_benchmark.sh
+```
+
+这个脚本会把论文固定版本的原始数据缓存到 `data/raw/`，从全量数据随机抽取 program 到 `data/`，再以 `reference` 输出长度模式运行三种调度策略。
+
+fixture 只有 16 个 program，只适合冒烟，不够支撑正式性能结论。正式测试建议至少 `LIMIT=1000`；如果要看 P99，优先使用 5000 个以上 program，并使用多个 seed 重复测试。还需要扫描多档 `ARRIVAL_RATE`，因为到达率过低时几乎没有资源竞争，不容易体现调度策略差异。
 
 ### Program-level replay 语义
 
@@ -96,32 +159,38 @@ done
 
 当 `--arrival-rate` 小于或等于 `0` 时，所有 program 都在测试开始时到达，但每个 program 内的 call 仍然顺序提交。
 
+正式 ShareGPT 测试使用 `--output-length-mode reference --ignore-eos`：每次 call 按数据集中对应 assistant 回复的 tokenizer 长度执行 decode，并受 `--max-tokens` 上限约束。后续 prompt 使用数据集中的真实 conversation history，从而稳定重放相同的 prefill/decode workload。
+
 ### 主要参数
 
 | 参数 | 默认值 | 说明 |
 | --- | ---: | --- |
 | `--dataset` | 必填 | `sharegpt` 或 `bfcl` |
 | `--input` | 必填 | 本地 JSON/JSONL 数据集路径 |
-| `--limit` | `1` | 最多加载的 program 数量；正式测试需要显式增大 |
+| `--limit` | `1` | 打乱和上下文过滤后选取的 program 数量；`0` 表示全部 |
 | `--scheduler-policy` | `mlfq_plas` | `fcfs`、`plas` 或 `mlfq_plas` |
 | `--model-path` | 开发机路径 | 本地模型目录，建议总是显式设置 |
 | `--arrival-rate` | `0` | 泊松 program 到达率，单位为 program/s；非正数表示同时到达 |
-| `--arrival-seed` | `0` | program 打乱和到达时间采样所用随机种子 |
-| `--shuffle-programs` | 关闭 | 在分配到达时间前随机打乱 program |
+| `--arrival-seed` | `0` | program 到达时间采样所用随机种子 |
+| `--sample-seed` | `--arrival-seed` | `--shuffle-programs` 的随机种子；用于在 `--limit` 前随机抽样 |
+| `--shuffle-programs` | 关闭 | 在上下文过滤和 `--limit` 前随机打乱 program |
 | `--replay-steps` | `3` | 每个 BFCL program 的顺序 call 数量 |
 | `--max-tokens` | `8` | 每次 call 的最大输出 token 数 |
+| `--output-length-mode` | `fixed` | `fixed` 使用固定 `--max-tokens`；`reference` 使用参考答案长度并受 `--max-tokens` 封顶 |
 | `--temperature` | `0.7` | 生成采样温度 |
 | `--ignore-eos` | 开启 | 是否忽略 EOS 并生成至 `--max-tokens`；可用 `--no-ignore-eos` 关闭 |
 | `--max-model-len` | `4096` | 模型最大上下文长度 |
 | `--max-num-seqs` | `512` | nano-vLLM 最大并发序列数 |
 | `--max-num-batched-tokens` | `16384` | 每个 batch 的最大 token 数 |
-| `--out` | 必填 | program 明细 JSONL 输出路径 |
+| `--skip-overlong-programs` | 开启 | 跳过任一 call 超过 `--max-model-len` 的 program |
+| `--validate-only` | 关闭 | 只解析和汇总 workload，不启动 nano-vLLM |
+| `--out` | 必填 | program 明细 JSONL 输出路径；`--validate-only` 时不需要 |
 | `--summary-out` | `<out>.summary.json` | 汇总 JSON 路径 |
 
 完整参数可以通过以下命令查看：
 
 ```bash
-python -m agentix_app.dataset_runner --help
+python3 -m agentix_app.dataset_runner --help
 ```
 
 ## 测试结果
@@ -129,8 +198,8 @@ python -m agentix_app.dataset_runner --help
 每次运行生成两个文件：
 
 ```text
-results/sharegpt-mlfq_plas.jsonl
-results/sharegpt-mlfq_plas.jsonl.summary.json
+results/sharegpt-limit1000-rate2-seed0-mlfq_plas.jsonl
+results/sharegpt-limit1000-rate2-seed0-mlfq_plas.jsonl.summary.json
 ```
 
 ### Program 明细 JSONL
@@ -184,27 +253,33 @@ summary 文件用于不同调度策略之间的主要比较。
 | `call_submission_mode` | call 提交模式，当前为 `program_sequential` |
 | `arrival_rate_program_per_sec` | 配置的 program 到达率 |
 | `arrival_seed` | 到达随机种子 |
+| `sample_seed` | program 抽样和打乱随机种子 |
 | `shuffle_programs` | 是否打乱 program |
 | `model_path` | 模型路径 |
 | `max_tokens` | 单次 call 最大输出 token 数 |
+| `output_length_mode` | 输出长度模式 |
 | `max_num_seqs` | 最大并发序列数 |
 | `max_num_batched_tokens` | batch 最大 token 数 |
 | `ignore_eos` | 是否忽略 EOS，持续生成至 `max_tokens` |
+| `skip_overlong_programs` | 是否启用上下文长度过滤 |
+| `num_loaded_programs` | 数据集中解析出的 runnable program 数 |
+| `num_skipped_overlong_programs` | 因上下文过长被跳过的 program 数 |
+| `num_selected_programs` | 实际进入 replay 的 program 数 |
 
-比较调度器时，优先关注 `p95_program_latency_sec`、`p99_program_latency_sec` 和 `throughput_program_per_sec`。尾延迟越低、program 吞吐越高越好，同时要先确认各结果的 `num_ok`、`total_calls` 和 workload 参数一致。
+比较调度器时，优先关注 `p95_program_latency_sec`、`p99_program_latency_sec` 和 `throughput_program_per_sec`。尾延迟越低、program 吞吐越高越好，同时要先确认各结果的 `num_ok`、`total_calls`、`num_selected_programs` 和 workload 参数一致。
 
 ## 查看结果
 
 只使用 Python 查看格式化后的 summary：
 
 ```bash
-python -m json.tool results/sharegpt-mlfq_plas.jsonl.summary.json
+python3 -m json.tool results/sharegpt-limit1000-rate2-seed0-mlfq_plas.jsonl.summary.json
 ```
 
 查看第一条 program 明细：
 
 ```bash
-head -n 1 results/sharegpt-mlfq_plas.jsonl | python -m json.tool
+head -n 1 results/sharegpt-limit1000-rate2-seed0-mlfq_plas.jsonl | python3 -m json.tool
 ```
 
 安装了 `jq` 时，可以提取三种策略的核心指标：
@@ -213,6 +288,8 @@ head -n 1 results/sharegpt-mlfq_plas.jsonl | python -m json.tool
 jq '{
   scheduler_policy,
   num_ok,
+  num_selected_programs,
+  num_skipped_overlong_programs,
   avg_program_latency_sec,
   p95_program_latency_sec,
   p99_program_latency_sec,
@@ -228,7 +305,7 @@ jq -s '
   | reverse
   | .[:10]
   | map({program_id, program_latency_sec, wait_time, service_time, num_calls})
-' results/sharegpt-mlfq_plas.jsonl
+' results/sharegpt-limit1000-rate2-seed0-mlfq_plas.jsonl
 ```
 
 计算 program 的平均等待时间和平均服务时间：
@@ -237,5 +314,9 @@ jq -s '
 jq -s '{
   avg_wait_time: (map(.wait_time) | add / length),
   avg_service_time: (map(.service_time) | add / length)
-}' results/sharegpt-mlfq_plas.jsonl
+}' results/sharegpt-limit1000-rate2-seed0-mlfq_plas.jsonl
 ```
+
+## BFCL 状态
+
+论文的 BFCL workload 来自 Apache-2.0 的 [Berkeley Function Calling Leaderboard](https://huggingface.co/datasets/gorilla-llm/Berkeley-Function-Calling-Leaderboard)。当前 `fixtures/bfcl_fixture_16.jsonl` 和 `datasets/bfcl.py` 只实现带 scripted Observation 的链路测试，没有执行 BFCLv3 的真实工具环境，因此不能用于复现论文 BFCL 结果。当前正式支持的数据集是上述真实 ShareGPT workload。

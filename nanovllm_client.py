@@ -11,8 +11,6 @@ _NANO_ROOT = Path(__file__).resolve().parents[1] / "nano-vllm"
 if str(_NANO_ROOT) not in sys.path:
     sys.path.insert(0, str(_NANO_ROOT))
 
-from nanovllm import LLM, SamplingParams  # noqa: E402
-
 from agentix_app.openai_types import ChatCompletionRequest, ChatMessage
 
 
@@ -31,6 +29,8 @@ class NanoVLLMChatClient:
         max_num_batched_tokens: int = 16384,
         enforce_eager: bool = True,
     ):
+        from nanovllm import LLM
+
         self.model_path = os.path.expanduser(model_path or DEFAULT_QWEN_MODEL)
         self.llm = LLM(
             self.model_path,
@@ -43,6 +43,8 @@ class NanoVLLMChatClient:
         self.model = Path(self.model_path).name
 
     def create(self, request: ChatCompletionRequest) -> dict[str, Any]:
+        from nanovllm import SamplingParams
+
         messages = request["messages"]
         prompt = self._render_messages(messages)
         agentix = dict(request.get("agentix") or {})
