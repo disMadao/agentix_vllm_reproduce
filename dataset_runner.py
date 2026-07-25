@@ -9,9 +9,8 @@ from pathlib import Path
 from typing import Any
 
 from agentix_app.datasets import ProgramSpec, load_bfcl, load_sharegpt
-from agentix_app.metrics import build_summary
+from agentix_app.metrics import build_summary, percentile
 from agentix_app.nanovllm_client import DEFAULT_QWEN_MODEL, NanoVLLMChatClient
-from nanovllm import SamplingParams
 
 
 @dataclass
@@ -26,14 +25,25 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Run Agentix dataset workloads on nano-vllm.")
     parser.add_argument("--dataset", choices=("sharegpt", "bfcl"), required=True)
     parser.add_argument("--input", required=True, help="Local JSON/JSONL dataset path.")
-    parser.add_argument("--limit", type=int, default=1)
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=1,
+        help="Number of runnable programs to select after shuffling and context-length filtering; non-positive means all.",
+    )
     parser.add_argument("--mode", choices=("replay",), default="replay")
     parser.add_argument("--scheduler-policy", choices=("fcfs", "plas", "mlfq_plas"), default="mlfq_plas")
     parser.add_argument("--model-path", default=DEFAULT_QWEN_MODEL)
     parser.add_argument("--max-model-len", type=int, default=4096)
     parser.add_argument("--max-num-seqs", type=int, default=512)
     parser.add_argument("--max-num-batched-tokens", type=int, default=16384)
-    parser.add_argument("--max-tokens", type=int, default=8)
+    parser.add_argument("--max-tokens", type=int, default=8, help="Maximum output tokens for each call.")
+    parser.add_argument(
+        "--output-length-mode",
+        choices=("fixed", "reference"),
+        default="fixed",
+        help="Use --max-tokens for every call, or replay each reference response's token length up to that cap.",
+    )
     parser.add_argument("--replay-steps", type=int, default=3)
     parser.add_argument("--temperature", type=float, default=0.7)
     parser.add_argument("--ignore-eos", action=argparse.BooleanOptionalAction, default=True)
@@ -43,20 +53,49 @@ def main() -> int:
         default=0.0,
         help="Poisson program arrival rate in programs/sec. Non-positive values submit all programs at t=0.",
     )
-    parser.add_argument("--arrival-seed", type=int, default=0, help="Seed for program order and Poisson arrivals.")
+    parser.add_argument("--arrival-seed", type=int, default=0, help="Seed for Poisson program arrivals.")
+    parser.add_argument(
+        "--sample-seed",
+        type=int,
+        default=None,
+        help="Seed used by --shuffle-programs before --limit. Defaults to --arrival-seed.",
+    )
     parser.add_argument(
         "--shuffle-programs",
         action=argparse.BooleanOptionalAction,
         default=False,
-        help="Shuffle loaded programs before assigning arrivals, approximating random program sampling.",
+        help="Shuffle runnable programs before context filtering, --limit, and arrival assignment.",
     )
-    parser.add_argument("--out", required=True, help="Program-level JSONL output path.")
+    parser.add_argument(
+        "--skip-overlong-programs",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Skip programs containing a call whose prompt plus target output exceeds --max-model-len.",
+    )
+    parser.add_argument(
+        "--validate-only",
+        action="store_true",
+        help="Load, sample, and summarize the workload without importing or running nano-vLLM.",
+    )
+    parser.add_argument("--out", default=None, help="Program-level JSONL output path.")
     parser.add_argument("--summary-out", default=None, help="Summary JSON output path.")
     args = parser.parse_args()
+    _validate_args(parser, args)
 
     programs = load_programs(args)
     if not programs:
         raise SystemExit("no runnable programs parsed from dataset")
+    if args.validate_only:
+        ordered_programs = _order_programs(programs, args)
+        sampled_programs = _select_programs_without_token_filter(ordered_programs, args)
+        print(
+            json.dumps(
+                build_workload_report(programs, sampled_programs, args),
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return 0
 
     result = run_replay(programs, args)
     out_path = Path(args.out).expanduser().resolve()
@@ -71,32 +110,119 @@ def main() -> int:
     return 0
 
 
+def _validate_args(parser: argparse.ArgumentParser, args) -> None:
+    if args.limit < 0:
+        parser.error("--limit must be >= 0")
+    if args.max_tokens <= 0:
+        parser.error("--max-tokens must be > 0")
+    if args.replay_steps <= 0:
+        parser.error("--replay-steps must be > 0")
+    if args.max_model_len <= 0:
+        parser.error("--max-model-len must be > 0")
+    if args.max_num_seqs <= 0:
+        parser.error("--max-num-seqs must be > 0")
+    if args.max_num_batched_tokens <= 0:
+        parser.error("--max-num-batched-tokens must be > 0")
+    if not args.validate_only and not args.out:
+        parser.error("--out is required unless --validate-only is set")
+
+
 def load_programs(args) -> list[ProgramSpec]:
     if args.dataset == "sharegpt":
-        return load_sharegpt(args.input, args.limit, args.max_tokens)
-    return load_bfcl(args.input, args.limit, args.max_tokens, replay_steps=args.replay_steps)
+        return load_sharegpt(args.input, None, args.max_tokens)
+    return load_bfcl(args.input, None, args.max_tokens, replay_steps=args.replay_steps)
+
+
+def _sample_seed(args) -> int:
+    return args.sample_seed if args.sample_seed is not None else args.arrival_seed
+
+
+def _order_programs(programs: list[ProgramSpec], args) -> list[ProgramSpec]:
+    programs = list(programs)
+    if args.shuffle_programs:
+        random.Random(_sample_seed(args)).shuffle(programs)
+    return programs
+
+
+def _select_programs_without_token_filter(programs: list[ProgramSpec], args) -> list[ProgramSpec]:
+    limit = max(0, int(args.limit))
+    if not limit:
+        return list(programs)
+    return list(programs[:limit])
+
+
+def build_workload_report(
+    all_programs: list[ProgramSpec],
+    selected_programs: list[ProgramSpec],
+    args,
+) -> dict[str, Any]:
+    call_counts = [len(program.calls) for program in selected_programs]
+    prompt_chars = [
+        sum(len(str(message.get("content", ""))) for message in call.messages)
+        for program in selected_programs
+        for call in program.calls
+    ]
+    max_messages_per_call = max(
+        (len(call.messages) for program in selected_programs for call in program.calls),
+        default=0,
+    )
+    return {
+        "dataset": args.dataset,
+        "input": str(Path(args.input).expanduser()),
+        "total_runnable_programs": len(all_programs),
+        "selected_programs": len(selected_programs),
+        "limit": args.limit,
+        "shuffle_programs": args.shuffle_programs,
+        "sample_seed": _sample_seed(args),
+        "arrival_rate_program_per_sec": args.arrival_rate,
+        "arrival_seed": args.arrival_seed,
+        "total_calls": sum(call_counts),
+        "multi_call_programs": sum(1 for count in call_counts if count > 1),
+        "avg_calls_per_program": _avg(call_counts),
+        "p50_calls_per_program": percentile([float(v) for v in call_counts], 0.50),
+        "p95_calls_per_program": percentile([float(v) for v in call_counts], 0.95),
+        "max_calls_per_program": max(call_counts, default=0),
+        "avg_prompt_chars_per_call": _avg(prompt_chars),
+        "p95_prompt_chars_per_call": percentile([float(v) for v in prompt_chars], 0.95),
+        "max_prompt_chars_per_call": max(prompt_chars, default=0),
+        "max_messages_per_call": max_messages_per_call,
+        "max_tokens_per_call": args.max_tokens,
+        "context_filter": "not_checked_in_validate_only",
+        "note": "Run without --validate-only on the inference machine to apply tokenizer-based --max-model-len filtering.",
+    }
+
+
+def _avg(values: list[int]) -> float:
+    return sum(values) / len(values) if values else 0.0
 
 
 def run_replay(programs: list[ProgramSpec], args) -> dict[str, Any]:
-    programs = list(programs)
+    programs = _order_programs(programs, args)
+    num_loaded_programs = len(programs)
     rng = random.Random(args.arrival_seed)
-    if args.shuffle_programs:
-        rng.shuffle(programs)
 
-    client = NanoVLLMChatClient(
-        model_path=args.model_path,
-        scheduler_policy=args.scheduler_policy,
-        max_model_len=args.max_model_len,
-        max_num_seqs=args.max_num_seqs,
-        max_num_batched_tokens=args.max_num_batched_tokens,
-        enforce_eager=True,
-    )
+    try:
+        client = NanoVLLMChatClient(
+            model_path=args.model_path,
+            scheduler_policy=args.scheduler_policy,
+            max_model_len=args.max_model_len,
+            max_num_seqs=args.max_num_seqs,
+            max_num_batched_tokens=args.max_num_batched_tokens,
+            enforce_eager=True,
+        )
+    except ImportError as exc:
+        raise SystemExit(
+            "nanovllm is not importable. Use --validate-only on machines without nano-vLLM; "
+            "on the benchmark machine, keep nano-vllm as a sibling directory of this repo."
+        ) from exc
     llm = client.llm
-    sampling_params = SamplingParams(
-        temperature=args.temperature,
-        max_tokens=args.max_tokens,
-        ignore_eos=args.ignore_eos,
+    programs, num_skipped_overlong_programs = _select_runnable_programs(
+        programs,
+        args,
+        client,
     )
+    if not programs:
+        raise SystemExit("no programs fit the configured model context")
     runtimes = _build_program_runtimes(programs, args.arrival_rate, rng)
     seq_to_call: dict[int, dict[str, Any]] = {}
     program_rows: dict[str, dict[str, Any]] = {}
@@ -115,7 +241,6 @@ def run_replay(programs: list[ProgramSpec], args) -> dict[str, Any]:
             args,
             client,
             llm,
-            sampling_params,
             seq_to_call,
             program_rows,
         )
@@ -143,9 +268,9 @@ def run_replay(programs: list[ProgramSpec], args) -> dict[str, Any]:
                 _submit_next_call(
                     runtime,
                     now,
+                    args,
                     client,
                     llm,
-                    sampling_params,
                     seq_to_call,
                 )
                 row["num_submitted_calls"] = runtime.next_call_idx
@@ -174,16 +299,65 @@ def run_replay(programs: list[ProgramSpec], args) -> dict[str, Any]:
             "scheduler_policy": args.scheduler_policy,
             "model_path": args.model_path,
             "max_tokens": args.max_tokens,
+            "output_length_mode": args.output_length_mode,
             "max_num_seqs": args.max_num_seqs,
             "max_num_batched_tokens": args.max_num_batched_tokens,
             "ignore_eos": args.ignore_eos,
+            "skip_overlong_programs": args.skip_overlong_programs,
+            "num_loaded_programs": num_loaded_programs,
+            "num_skipped_overlong_programs": num_skipped_overlong_programs,
+            "num_selected_programs": len(programs),
             "call_submission_mode": "program_sequential",
             "arrival_rate_program_per_sec": args.arrival_rate,
             "arrival_seed": args.arrival_seed,
+            "sample_seed": _sample_seed(args),
             "shuffle_programs": args.shuffle_programs,
         }
     )
     return {"programs": rows, "summary": summary}
+
+
+def _select_runnable_programs(
+    programs: list[ProgramSpec],
+    args,
+    client: NanoVLLMChatClient,
+) -> tuple[list[ProgramSpec], int]:
+    selected: list[ProgramSpec] = []
+    skipped_overlong = 0
+    limit = max(0, int(args.limit))
+    for program in programs:
+        if args.skip_overlong_programs and not _program_fits_model(program, args, client):
+            skipped_overlong += 1
+            continue
+        selected.append(program)
+        if limit and len(selected) >= limit:
+            break
+    return selected, skipped_overlong
+
+
+def _program_fits_model(program: ProgramSpec, args, client: NanoVLLMChatClient) -> bool:
+    tokenizer = client.llm.tokenizer
+    for call in program.calls:
+        prompt = client._render_messages(call.messages)
+        prompt_tokens = _encode(tokenizer, prompt)
+        output_tokens = _target_output_tokens(call, args, tokenizer)
+        if len(prompt_tokens) + output_tokens > args.max_model_len:
+            return False
+    return True
+
+
+def _target_output_tokens(call, args, tokenizer) -> int:
+    max_tokens = max(1, int(args.max_tokens))
+    if args.output_length_mode == "reference" and call.reference:
+        return min(max_tokens, max(1, len(_encode(tokenizer, call.reference))))
+    return max_tokens
+
+
+def _encode(tokenizer, text: str) -> list[int]:
+    try:
+        return tokenizer.encode(text, add_special_tokens=False)
+    except TypeError:
+        return tokenizer.encode(text)
 
 
 def _build_program_runtimes(
@@ -208,7 +382,6 @@ def _admit_ready_programs(
     args,
     client: NanoVLLMChatClient,
     llm,
-    sampling_params: SamplingParams,
     seq_to_call: dict[int, dict[str, Any]],
     program_rows: dict[str, dict[str, Any]],
 ) -> tuple[int, int]:
@@ -237,7 +410,7 @@ def _admit_ready_programs(
             "status": "ok",
         }
         if program.calls:
-            _submit_next_call(runtime, now, client, llm, sampling_params, seq_to_call)
+            _submit_next_call(runtime, now, args, client, llm, seq_to_call)
             program_rows[program.program_id]["num_submitted_calls"] = runtime.next_call_idx
         else:
             program_rows[program.program_id]["ended_at"] = now
@@ -248,14 +421,21 @@ def _admit_ready_programs(
 def _submit_next_call(
     runtime: ProgramRuntime,
     now: float,
+    args,
     client: NanoVLLMChatClient,
     llm,
-    sampling_params: SamplingParams,
     seq_to_call: dict[int, dict[str, Any]],
 ) -> None:
+    from nanovllm import SamplingParams
+
     program = runtime.program
     call = program.calls[runtime.next_call_idx]
     prompt = client._render_messages(call.messages)
+    sampling_params = SamplingParams(
+        temperature=args.temperature,
+        max_tokens=_target_output_tokens(call, args, llm.tokenizer),
+        ignore_eos=args.ignore_eos,
+    )
     seq_id = llm.add_request(
         prompt,
         sampling_params,
