@@ -134,16 +134,40 @@ MAX_TOKENS=512 \
 仓库内已经有 5000 条真实数据，一键测试无需下载数据：
 
 ```bash
-MODEL=/models/Qwen3-0.6B \
-LIMIT=5000 \
-ARRIVAL_RATES="1 2 3" \
-ARRIVAL_SEEDS="0 1 2" \
-./scripts/run_sharegpt_benchmark.sh
+./scripts/run_sharegpt_benchmark.sh /models/Qwen3-0.6B
 ```
 
-脚本默认读取 `benchmark_data/sharegpt-real-5000-seed0.jsonl.gz`，并以 `reference` 输出长度模式运行三种调度策略。只有显式指定其他 `PREPARE_PROGRAMS` 或 `DATASET` 时才会准备另一份数据。
+这一条命令会先检查数据，再使用以下正式默认矩阵运行测试：
+
+- 真实 ShareGPT program：`5000`
+- program 到达率：`1 2 4` program/s
+- seed：`0 1 2`
+- 调度策略：`fcfs plas mlfq_plas`
+- 输出长度：数据集真实 assistant 回复的 token 数，单次 call 最多 `512`
+
+结果写入 `results/sharegpt-real/`。这会启动 27 次推理测试，可能运行数小时；中断后可以通过环境变量缩小矩阵重新运行。只有显式指定其他 `PREPARE_PROGRAMS` 或 `DATASET` 时，脚本才会准备另一份数据。
+
+例如只做一次较短的推理链路检查：
+
+```bash
+LIMIT=16 \
+ARRIVAL_RATES="2" \
+ARRIVAL_SEEDS="0" \
+./scripts/run_sharegpt_benchmark.sh /models/Qwen3-0.6B
+```
 
 fixture 只有 16 个 program，只适合冒烟，不够支撑正式性能结论。正式测试建议至少 `LIMIT=1000`；如果要看 P99，优先使用 5000 个以上 program，并使用多个 seed 重复测试。还需要扫描多档 `ARRIVAL_RATE`，因为到达率过低时几乎没有资源竞争，不容易体现调度策略差异。
+
+增大 `LIMIT` 本身不会制造调度收益。它的作用是让到达过程持续更久、减少均值和 P95/P99 的随机波动，并覆盖更多长短不同的 program。调度器只有在多个 program 同时等待 GPU、且 program 的 call 数和 token 数存在差异时，才有优化空间；系统处于低负载时，三种策略接近是正常结果。
+
+判断负载是否足够时，先看 FCFS summary：如果 `throughput_program_per_sec` 基本跟随配置的到达率，且 program 延迟随到达率升高仍没有明显上升，说明还未进入排队区间。此时应提高到达率，例如：
+
+```bash
+ARRIVAL_RATES="2 4 8" \
+./scripts/run_sharegpt_benchmark.sh /models/Qwen3-0.6B
+```
+
+因此，5,000 条数据会让结论更可信，但不能保证调度器一定优于 FCFS。应在出现排队竞争的到达率下，比较三种策略的平均 program 延迟、P95/P99 和吞吐；调度优化通常首先体现在 program 延迟分布，而不一定体现在总吞吐。
 
 ### Program-level replay 语义
 
