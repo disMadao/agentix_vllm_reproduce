@@ -12,9 +12,15 @@ if [[ -z "${PYTHON_BIN:-}" ]]; then
     PYTHON_BIN="python"
   fi
 fi
-PREPARE_PROGRAMS="${PREPARE_PROGRAMS:-10000}"
+PREPARE_PROGRAMS="${PREPARE_PROGRAMS:-5000}"
 DATASET_SEED="${DATASET_SEED:-0}"
-DATASET="${DATASET:-$REPO_ROOT/data/sharegpt-real-${PREPARE_PROGRAMS}-seed${DATASET_SEED}.jsonl}"
+if [[ -z "${DATASET:-}" ]]; then
+  if [[ "$PREPARE_PROGRAMS" == "5000" && "$DATASET_SEED" == "0" ]]; then
+    DATASET="$REPO_ROOT/benchmark_data/sharegpt-real-5000-seed0.jsonl.gz"
+  else
+    DATASET="$REPO_ROOT/data/sharegpt-real-${PREPARE_PROGRAMS}-seed${DATASET_SEED}.jsonl.gz"
+  fi
+fi
 LIMIT="${LIMIT:-1000}"
 ARRIVAL_RATES="${ARRIVAL_RATES:-2}"
 ARRIVAL_SEEDS="${ARRIVAL_SEEDS:-0}"
@@ -34,9 +40,9 @@ This prepares the real ShareGPT sample when DATASET does not exist, then runs
 fcfs, plas, and mlfq_plas through scripts/run_benchmark.sh.
 
 Common optional env:
-  PREPARE_PROGRAMS=10000
+  PREPARE_PROGRAMS=5000
   DATASET_SEED=0
-  DATASET=data/sharegpt-real-10000-seed0.jsonl
+  DATASET=benchmark_data/sharegpt-real-5000-seed0.jsonl.gz
   LIMIT=1000
   ARRIVAL_RATES="1 2 3"
   ARRIVAL_SEEDS="0 1 2"

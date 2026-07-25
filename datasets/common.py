@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gzip
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -28,13 +29,19 @@ class ProgramSpec:
 
 def load_json_or_jsonl(path: str | Path) -> list[dict[str, Any]]:
     path = Path(path).expanduser().resolve()
-    text = path.read_text(encoding="utf-8")
-    if path.suffix.lower() == ".jsonl":
-        return [json.loads(line) for line in text.splitlines() if line.strip()]
+    if path.suffix.lower() == ".gz":
+        with gzip.open(path, "rt", encoding="utf-8") as source:
+            text = source.read()
+        data_suffix = path.with_suffix("").suffix.lower()
+    else:
+        text = path.read_text(encoding="utf-8")
+        data_suffix = path.suffix.lower()
+    if data_suffix == ".jsonl":
+        return [json.loads(line) for line in text.split("\n") if line.strip()]
     try:
         data = json.loads(text)
     except json.JSONDecodeError:
-        return [json.loads(line) for line in text.splitlines() if line.strip()]
+        return [json.loads(line) for line in text.split("\n") if line.strip()]
     if isinstance(data, list):
         return data
     if isinstance(data, dict):

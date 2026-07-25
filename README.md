@@ -33,24 +33,25 @@ ShareGPT workload 应该重放完整多轮 conversation，而不是只使用第�
 | program | 一条完整 conversation |
 | LLM call | 一个 user/assistant turn |
 
-下面的命令会断点下载原始数据、流式扫描整个数据集，并使用 reservoir sampling 从所有有效 program 中随机抽取 10000 条：
+仓库已经直接包含可运行的真实样本：
+
+```text
+benchmark_data/sharegpt-real-5000-seed0.jsonl.gz
+benchmark_data/sharegpt-real-5000-seed0.stats.json
+```
+
+这份数据从完整数据集的 92,825 个有效 program 中以 seed `0` 做 reservoir sampling，包含 5,000 个 program 和 17,696 次 LLM call，压缩后约 9.1 MiB。runner 可以直接读取 `.jsonl.gz`，无需解压或额外下载。
+
+下面的命令可以从固定 revision 重新生成完全相同的仓库内样本：
 
 ```bash
 python3 scripts/prepare_sharegpt.py \
-  --num-programs 10000 \
+  --num-programs 5000 \
   --seed 0 \
-  --output data/sharegpt-real-10000-seed0.jsonl
+  --output benchmark_data/sharegpt-real-5000-seed0.jsonl.gz
 ```
 
-生成的文件如下：
-
-```text
-data/raw/ShareGPT_V3_unfiltered_cleaned_split.json
-data/sharegpt-real-10000-seed0.jsonl
-data/sharegpt-real-10000-seed0.jsonl.stats.json
-```
-
-stats 文件记录全量扫描数、有效 program 数、抽样 call 分布、数据 revision 和许可证。`data/` 已加入 `.gitignore`，不会提交原始数据和抽样结果。
+完整的 673 MB 原始文件缓存到已忽略的 `data/raw/`。stats 文件记录全量扫描数、有效 program 数、call 分布、数据 revision、许可证和压缩样本 SHA-256。
 
 ### 先检查数据集
 
@@ -59,8 +60,8 @@ stats 文件记录全量扫描数、有效 program 数、抽样 call 分布、�
 ```bash
 python3 -m agentix_app.dataset_runner \
   --dataset sharegpt \
-  --input fixtures/sharegpt_fixture_16.json \
-  --limit 16 \
+  --input benchmark_data/sharegpt-real-5000-seed0.jsonl.gz \
+  --limit 5000 \
   --arrival-rate 2 \
   --arrival-seed 0 \
   --shuffle-programs \
@@ -130,18 +131,17 @@ MAX_TOKENS=512 \
 - 模型、`MAX_TOKENS`、batch 配置和其他推理参数
 - 运行机器和 GPU 配置
 
-如果正式机器还没有准备好的 ShareGPT 文件，可以使用固定版本下载和采样脚本：
+仓库内已经有 5000 条真实数据，一键测试无需下载数据：
 
 ```bash
-MODEL_PATH=/models/Qwen3-0.6B \
-PREPARE_PROGRAMS=10000 \
-LIMIT=1000 \
+MODEL=/models/Qwen3-0.6B \
+LIMIT=5000 \
 ARRIVAL_RATES="1 2 3" \
 ARRIVAL_SEEDS="0 1 2" \
 ./scripts/run_sharegpt_benchmark.sh
 ```
 
-这个脚本会把论文固定版本的原始数据缓存到 `data/raw/`，从全量数据随机抽取 program 到 `data/`，再以 `reference` 输出长度模式运行三种调度策略。
+脚本默认读取 `benchmark_data/sharegpt-real-5000-seed0.jsonl.gz`，并以 `reference` 输出长度模式运行三种调度策略。只有显式指定其他 `PREPARE_PROGRAMS` 或 `DATASET` 时才会准备另一份数据。
 
 fixture 只有 16 个 program，只适合冒烟，不够支撑正式性能结论。正式测试建议至少 `LIMIT=1000`；如果要看 P99，优先使用 5000 个以上 program，并使用多个 seed 重复测试。还需要扫描多档 `ARRIVAL_RATE`，因为到达率过低时几乎没有资源竞争，不容易体现调度策略差异。
 

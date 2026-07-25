@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 import argparse
+import gzip
+import hashlib
+import io
 import json
 import os
 import random
@@ -104,7 +107,7 @@ def main() -> int:
         "source_repository": DATASET_REPOSITORY,
         "source_revision": DATASET_REVISION,
         "source_file": DATASET_FILENAME,
-        "source_path": str(source_path),
+        "source": args.source,
         "license": DATASET_LICENSE,
         "seed": args.seed,
         "requested_programs": args.num_programs,
@@ -118,6 +121,7 @@ def main() -> int:
         "sample_median_calls_per_program": statistics.median(sample_call_counts),
         "sample_min_calls_per_program": min(sample_call_counts),
         "sample_max_calls_per_program": max(sample_call_counts),
+        "sample_sha256": sha256_file(output_path),
     }
     stats_path = Path(args.stats_out or f"{output_path}.stats.json").expanduser().resolve()
     write_json_atomic(stats_path, stats)
@@ -252,7 +256,8 @@ def sample_programs(
 
 
 def iter_json_records(path: Path) -> Iterator[dict[str, Any]]:
-    with path.open("r", encoding="utf-8") as source:
+    opener = gzip.open if path.suffix.lower() == ".gz" else open
+    with opener(path, "rt", encoding="utf-8") as source:
         first = read_first_non_whitespace(source)
         if first == "[":
             yield from iter_json_array(source)
@@ -387,10 +392,26 @@ def clean_text(value: Any) -> str:
 def write_jsonl_atomic(path: Path, rows: list[dict[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.name}.tmp")
-    with temporary.open("w", encoding="utf-8") as output:
-        for row in rows:
-            output.write(json.dumps(row, ensure_ascii=False) + "\n")
+    if path.suffix.lower() == ".gz":
+        with temporary.open("wb") as raw_output:
+            with gzip.GzipFile(
+                filename="",
+                mode="wb",
+                fileobj=raw_output,
+                compresslevel=9,
+                mtime=0,
+            ) as compressed_output:
+                with io.TextIOWrapper(compressed_output, encoding="utf-8") as output:
+                    _write_jsonl(output, rows)
+    else:
+        with temporary.open("w", encoding="utf-8") as output:
+            _write_jsonl(output, rows)
     os.replace(temporary, path)
+
+
+def _write_jsonl(output: TextIO, rows: list[dict[str, Any]]) -> None:
+    for row in rows:
+        output.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 
 def write_json_atomic(path: Path, value: dict[str, Any]) -> None:
@@ -407,6 +428,14 @@ def format_bytes(value: int) -> str:
             return f"{size:.1f} {unit}"
         size /= 1024.0
     return f"{size:.1f} GiB"
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        while chunk := source.read(DOWNLOAD_CHUNK_BYTES):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 if __name__ == "__main__":
